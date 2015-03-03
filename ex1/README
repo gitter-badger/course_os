@@ -1,0 +1,145 @@
+griffonn, ednussi
+Gregory Pasternak (327148417), Eran Nussinovitch (302186408)
+EX: 1
+
+FILES:
+README
+makefile
+osm.c
+
+REMARKS:
+
+ANSWERS:
+Task 1.
+
+dup(2) duplicates stderr file descriptor to a new file descriptor that gets 
+lowest numbered unused descriptor (3 in our case). Now if we print something to 
+3 it will output to stderr.
+
+fcntl(3, F_GETFL) performs F_GETFL operation on the (previously duplicated) 
+descriptor: gets its access mode and status flags, returns a numerical value of
+file status flags. (strace prints also the meaning of that numerical value - in
+our case 0_RDWR and 0_LARGEFILE).
+
+brk(0) tries to change current break value to the argument but since it is 0 it
+is not valid at any time so the brk(0) returns the current break value.
+
+brk(0x1d2f000) (the argument in your program is relative to current break) tries
+to change current break value to the argument and succeeds and thus returns new 
+break value.
+
+fstat(3, {st_mode=S_IFCHR|0620, st_rdev=makedev(136, 0), ...}) gets file status 
+by descriptor (first arg) and puts the result in the second arg (special 
+struct), where we explicitly set the st_mode and st_rdev fields. Returns zero if
+succeed.
+
+mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) creates
+a new mapping in the virtual address space of the calling process. First 
+argument is NULL therefore the kernel chooses the starting address of the 
+mapping. Second arg is the desired length of the mapping. Third arg is the 
+memory protection which is read/write in our case. Fourth arg sets the mapping 
+to be invisible to other processes (MAP_PRIVATE) and also sets it to be not 
+backed up by any file and is initialized to zeros (MAP_ANONYMOUS). Fifth -1 is 
+just a required settlement for such an anonimity. Seventh arg 0 is ignored in 
+the case of anonimity, but in other cases specifies offset. Returns the address 
+of the new mapping.
+
+lseek(3, 0, SEEK_CUR) tries to reposition the offset of the open file, yet 
+setting offset (2nd arg) to zero is useful to check if the reference file is 
+capable of seeking. Here it is not as fd=3 in our case is stderr which is a 
+terminal device. Thus returned -1 and set errno to ESPIPE.
+
+write(3, "Only a single argument is suppor"..., 36) tries to write given string,
+up to 36 bytes to fd=3 (stderr), and succeeds and thus returns 36 (the number of
+bytes written).
+
+write(3, ": Success\n", 10) - same here.
+
+close(3) closes fd=3 file.
+
+munmap(0x7ff722910000, 4096) unmaps the mapped memory from given address of 
+given length.
+
+exit_group(0) exits all threads of the process.
+
+We concluded the above using manpages and google.
+
+--------------------------------------------------
+
+Task 2.
+1)
+Lets look at the following example of bad side effects that might happen:
+a) First process (I) writes 1's to a file, and suddenly an interrupt happens 
+(e.g. user started another process (II)). The IC notifies the CPU and CPU 
+immediately saves the state of current process (I) and handles the interrupt. 
+At this time, before (I) gets control back, (II) writes 0's to the very same 
+file. When it is finished, the previous state is restored and (I) keeps writing 
+1's (possibly) from the same point it was interrupted without "knowing" that 
+there are 0's before that point now.
+
+b) Some process is destined to print "1" every round hour, but suddenly 
+interrupted. After it gets its control back, the round hour exactly passed and 
+the result will not be printed until next round hour.
+
+2)
+The idea of blocking all interrupts under certain circumstances is not a very 
+good one. Even though there would be no collisions (e.g. in the file write and 
+other side effects), but the system will freeze (as for user) entirely until the
+process is complete. Furthermore, crutial interrupts (e.g. cooling system) will 
+be put on hold and may cause entire system crashes, etc.
+
+--------------------------------------------------
+
+Task 3.
+
+Results: 
+
+The three function of different operations time measurement (osm_function_time,
+osm_syscall_time, osm_operation_time) are built in very similar manner: 
+We begin with some initializations, input validation, then in the loop we:
+1) get current time (A)
+2) run the operation
+3) get current time again (B)
+4) calculate difference between A, B and add it to total runtime.
+After the loop we calculate and return the average runtime for single operation
+by dividing total runtime by total number of iterations.
+
+The results we got are:
+Option 1 (measuring one operation at a time):
+Hostname:			hup-01
+Number of iterations:		50000
+Function:			21.320000
+Trap:				289.540000
+Instruction			20.860000
+Function/Instruction Ratio:	1.022052
+Trap/Instruction Ratio:		13.880153
+
+
+The measureTime function initializes its struct, gets system vars (hostname),
+and then run the above functions and saves results to the appropriate field in 
+struct.
+
+How can we tell if the measurements are good enough?
+We tried to measure a time of time measurement by running two gettimeofday() 
+calls one right after the other and calculate the difference of the two, and
+substructing this time from measured time of the operation (with its own pair of
+gettimeofday() calls).
+But it seems like there are some optimizations or limitations in the precision
+of the measurement and thuis we got negative time, which is highly unlogical.
+Therefore we left only the operation measurement time.
+
+To minimize the overhead of the time of time measurement, we have chosen to 
+refactor the loop in every function as follows:
+1) get current time (A)
+2) run the operation in loop osm_iterations times
+3) get current time again (B)
+4) calculate difference between A, B and divide by number of iterations.
+
+Now the results are:
+Hostname:			hup-01
+Number of iterations:		50000
+Function:			2.220000
+Trap:				250.360000
+Instruction			2.160000
+Function/Instruction Ratio:	1.027778
+Trap/Instruction Ratio:		115.907407
